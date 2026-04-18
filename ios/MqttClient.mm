@@ -2,6 +2,7 @@
 #import <React/RCTBridgeModule.h>
 #import <ReactCommon/RCTTurboModule.h>
 #import <MQTTClient/MQTTClient.h>
+#import <MQTTClient/MQTTWebsocketTransport.h>
 #import "MqttClient.h"
 
 @interface MqttClient () <MQTTSessionDelegate>
@@ -135,35 +136,55 @@
   @try {
     if (_session) { [_session disconnect]; _session = nil; }
 
-    NSString  *host   = brokerUrl;
-    NSUInteger port   = 1883;
-    BOOL       useSSL = NO;
-
-    if ([brokerUrl hasPrefix:@"ssl://"] || [brokerUrl hasPrefix:@"tls://"]) {
-      useSSL = YES; port = 8883;
-      host = [brokerUrl stringByReplacingOccurrencesOfString:@"ssl://" withString:@""];
-      host = [host       stringByReplacingOccurrencesOfString:@"tls://" withString:@""];
-    } else if ([brokerUrl hasPrefix:@"tcp://"]) {
-      host = [brokerUrl stringByReplacingOccurrencesOfString:@"tcp://" withString:@""];
-    } else if ([brokerUrl hasPrefix:@"wss://"]) {
-      useSSL = YES; port = 443;
-      host = [brokerUrl stringByReplacingOccurrencesOfString:@"wss://" withString:@""];
-    } else if ([brokerUrl hasPrefix:@"ws://"]) {
-      port = 80;
-      host = [brokerUrl stringByReplacingOccurrencesOfString:@"ws://" withString:@""];
+    NSString *normalizedUrl = brokerUrl;
+    if (![normalizedUrl containsString:@"://"]) {
+        normalizedUrl = [NSString stringWithFormat:@"tcp://%@", normalizedUrl];
+    }
+    
+    NSURL *url = [NSURL URLWithString:normalizedUrl];
+    if (!url) {
+      @throw [NSException exceptionWithName:@"InvalidURL" reason:@"Broker URL could not be parsed" userInfo:nil];
     }
 
-    NSArray *parts = [host componentsSeparatedByString:@":"];
-    if (parts.count > 1) { host = parts[0]; port = [parts[1] integerValue]; }
+    NSString *scheme = url.scheme.lowercaseString;
+    NSString *host = url.host ?: @"";
+    NSString *path = url.path; 
+    if (path.length == 0 && ([scheme isEqualToString:@"ws"] || [scheme isEqualToString:@"wss"])) {
+        path = @"/mqtt";
+    }
+    
+    NSUInteger port = 1883;
+    if (url.port) {
+      port = url.port.unsignedIntegerValue;
+    } else if ([scheme isEqualToString:@"ssl"] || [scheme isEqualToString:@"tls"]) {
+      port = 8883;
+    } else if ([scheme isEqualToString:@"wss"]) {
+      port = 443;
+    } else if ([scheme isEqualToString:@"ws"]) {
+      port = 80;
+    }
+
+    BOOL useSSL = [scheme isEqualToString:@"ssl"] || [scheme isEqualToString:@"tls"] || [scheme isEqualToString:@"wss"];
+    
+    id<MQTTTransport> transport;
+    if ([scheme isEqualToString:@"ws"] || [scheme isEqualToString:@"wss"]) {
+      MQTTWebsocketTransport *wsTransport = [[MQTTWebsocketTransport alloc] init];
+      wsTransport.host = host;
+      wsTransport.port = (UInt32)port;
+      wsTransport.tls = useSSL;
+      wsTransport.path = path ?: @"";
+      transport = wsTransport;
+    } else {
+      MQTTCFSocketTransport *tcpTransport = [[MQTTCFSocketTransport alloc] init];
+      tcpTransport.host = host;
+      tcpTransport.port = (UInt32)port;
+      tcpTransport.tls = useSSL;
+      if (useSSL) tcpTransport.streamSSLLevel = (NSString *)kCFStreamSocketSecurityLevelNegotiatedSSL;
+      transport = tcpTransport;
+    }
 
     NSString *clientId = [NSString stringWithFormat:@"ReactNativeMqtt_%@",
                           [[NSUUID UUID].UUIDString substringToIndex:8]];
-
-    MQTTCFSocketTransport *transport = [[MQTTCFSocketTransport alloc] init];
-    transport.host = host;
-    transport.port = (UInt32)port;
-    transport.tls  = useSSL;
-    if (useSSL) transport.streamSSLLevel = (NSString *)kCFStreamSocketSecurityLevelNegotiatedSSL;
 
     _session                   = [[MQTTSession alloc] init];
     _session.transport         = transport;

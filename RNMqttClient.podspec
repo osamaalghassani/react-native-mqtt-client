@@ -16,7 +16,7 @@ Pod::Spec.new do |s|
   s.source_files = "ios/**/*.{h,m,mm,swift,cpp}"
   s.private_header_files = "ios/**/*.h"
 
-  s.dependency "MQTTClient", "~> 0.15"
+  s.dependency "MQTTClient/Websocket", "~> 0.15"
 
   # Enable Clang modules for Objective-C++ so MQTTClient's `@import Foundation;` compiles in .mm files
   s.pod_target_xcconfig = {
